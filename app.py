@@ -5,67 +5,91 @@ import os
 
 app = Flask(__name__)
 
-# Initialize webcam
-cap = cv2.VideoCapture(0)
+# Detect if running on Render (no webcam available)
+IS_RENDER = os.environ.get("RENDER", False)
+
+# Initialize webcam only if not on Render
+cap = None
+if not IS_RENDER:
+    cap = cv2.VideoCapture(0)
 
 frame_count = 0
 emotion = "detecting..."
 face_box = None  # to store face coordinates
 
+
 def generate_frames():
-    global frame_count, emotion, face_box
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
+    global frame_count, emotion, face_box, cap
 
-        frame_count += 1
-        frame = cv2.resize(frame, (640, 480))
+    if cap is None:  # No camera available (Render case)
+        while True:
+            # Just show a placeholder image with text
+            import numpy as np
+            frame = 255 * np.ones((480, 640, 3), dtype=np.uint8)
+            cv2.putText(frame, "No Camera Available on Render",
+                        (30, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
+                        (0, 0, 255), 2)
 
-        if frame_count % 3 == 0:  # analyze every 3rd frame
-            try:
-                analysis = DeepFace.analyze(
-                    frame,
-                    actions=['emotion'],
-                    detector_backend='opencv',
-                    enforce_detection=False
-                )
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
 
-                if isinstance(analysis, list):
-                    analysis = analysis[0]
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+    else:
+        while True:
+            success, frame = cap.read()
+            if not success:
+                break
 
-                emotion = analysis['dominant_emotion']
-                face_box = analysis['region']
+            frame_count += 1
+            frame = cv2.resize(frame, (640, 480))
 
-            except Exception as e:
-                print("DeepFace Error:", e)
-                emotion = "error"
-                face_box = None
+            if frame_count % 3 == 0:  # analyze every 3rd frame
+                try:
+                    analysis = DeepFace.analyze(
+                        frame,
+                        actions=['emotion'],
+                        detector_backend='opencv',
+                        enforce_detection=False
+                    )
 
-        # Draw results
-        if face_box is not None:
-            x, y, w, h = face_box['x'], face_box['y'], face_box['w'], face_box['h']
-            cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-            cv2.putText(frame, emotion, (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    if isinstance(analysis, list):
+                        analysis = analysis[0]
 
-        # Encode as JPEG
-        ret, buffer = cv2.imencode('.jpg', frame)
-        frame = buffer.tobytes()
+                    emotion = analysis['dominant_emotion']
+                    face_box = analysis['region']
 
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+                except Exception as e:
+                    print("DeepFace Error:", e)
+                    emotion = "error"
+                    face_box = None
+
+            # Draw results
+            if face_box is not None:
+                x, y, w, h = face_box['x'], face_box['y'], face_box['w'], face_box['h']
+                cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                cv2.putText(frame, emotion, (x, y - 10),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+            # Encode as JPEG
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
+
 @app.route('/video')
 def video():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
-    
+
+
 if __name__ == "__main__":
-    
-    port = int(os.environ.get("PORT", 5000))  # Render provides PORT env var
+    port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
