@@ -1,6 +1,7 @@
 from flask import Flask, render_template, Response
 import cv2
 from deepface import DeepFace
+import os
 
 app = Flask(__name__)
 
@@ -63,6 +64,8 @@ def index():
 def video():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
-
+    
 if __name__ == "__main__":
-    app.run(debug=True)
+    
+    port = int(os.environ.get("PORT", 5000))  # Render provides PORT env var
+    app.run(host="0.0.0.0", port=port, debug=True)
